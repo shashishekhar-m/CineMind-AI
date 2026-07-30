@@ -1,0 +1,8 @@
+etl/data/imdb/raw/
+etl/data/imdb/archive/
+etl/data/tmdb/cache/
+etl/data/tmdb/images/
+etl/data/tmdb/responses/
+*.tsv
+*.gz
+.env

@@ -1,0 +1,35 @@
+Movies
+   │
+   │
+   ├──────── Ratings
+   │
+   ├──────── Movie Genres
+   │              │
+   │              ▼
+   │           Genres
+   │
+   ├──────── Movie People
+   │              │
+   │              ▼
+   │           People
+   │
+   ├──────── Movie Keywords
+   │              │
+   │              ▼
+   │           Keywords
+   │
+   └──────── Movie Languages
+                  │
+                  ▼
+              Languages
+
+
+Users
+
+├──── Favorites
+
+├──── Watch History
+
+├──── Reviews
+
+└──── Search History
