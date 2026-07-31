@@ -4,9 +4,6 @@
 
 
 
-
-\
-
 ## Overview
 
 CineMind AI is a full-stack movie recommendation platform designed to demonstrate production-grade software engineering practices. It leverages IMDb and TMDb datasets to deliver intelligent recommendations using hybrid ranking, semantic embeddings, and modern search techniques.
