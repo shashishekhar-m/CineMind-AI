@@ -231,9 +231,6 @@ CineMind AI was built to showcase:
 * Social features
 * LLM-powered movie assistant
 
-## License
-
-This project is licensed under the MIT License.
 
 ## Author
 
