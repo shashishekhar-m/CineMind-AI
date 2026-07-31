@@ -158,7 +158,7 @@ CineMind AI uses a hybrid recommendation approach:
 ### Clone the Repository
 
 ```bash
-git clone https://github.com/<your-username>/CineMind-AI.git
+git clone https://github.com/shashishekhar-m/CineMind-AI.git
 cd CineMind-AI
 ```
 
@@ -239,9 +239,6 @@ This project is licensed under the MIT License.
 
 **Shashi Shekhar Mahato**
 
-* Computer Science & Engineering (AI/ML)
-* Techno India University
-* Aspiring Backend & AI Engineer
 
 ---
 
