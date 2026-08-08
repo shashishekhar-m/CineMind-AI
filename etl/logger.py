@@ -2,7 +2,7 @@ import logging
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 
-from config import settings
+from etl.config import settings
 
 Path(settings.log_path).mkdir(parents=True, exist_ok=True)
 
