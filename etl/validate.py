@@ -1,21 +1,28 @@
+"""Row and dataset-level validation for the IMDb streaming ETL pipeline.
+
+Validation runs after extraction and before transformation. It never
+mutates rows; it only classifies them as valid/invalid and produces
+statistics so bad data can be quarantined (see ``invalid_rows_path``)
+without stopping the pipeline.
+"""
+
 from __future__ import annotations
 
+import csv
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, TypeAlias
+from typing import Any, Dict, Generator, Iterator, List, Optional, Set, TypeAlias
 
-from constants import (
-    IMDB_DATASETS,
-    NULL_VALUES,
-)
-from logger import get_logger
+from etl.constants import IMDB_DATASETS, NULL_VALUES
+from etl.logger import get_logger
 
 logger = get_logger(__name__)
 
 Row: TypeAlias = Dict[str, Any]
 RowBatch: TypeAlias = List[Row]
+ChunkIterator: TypeAlias = Iterator[RowBatch]
 ValidationErrors: TypeAlias = List[str]
 ValidationWarnings: TypeAlias = List[str]
 
@@ -141,356 +148,368 @@ class ValidationStatistics:
     def finish(self) -> None:
         self.finished_at = datetime.utcnow()
 
-    def validate_required_fields(
-        row: Row,
-        required_fields: List[str],
-    ) -> ValidationResult:
-        result = ValidationResult()
 
-        for field in required_fields:
-            if field not in row:
-                result.add_issue(
-                    rule=ValidationRule.REQUIRED_FIELD,
-                    severity=ValidationSeverity.ERROR,
-                    field=field,
-                    message=f"Missing required field '{field}'.",
-                )
-                continue
+def validate_required_fields(
+    row: Row,
+    required_fields: List[str],
+) -> ValidationResult:
+    result = ValidationResult()
 
-            value = row[field]
+    for field_name in required_fields:
+        if field_name not in row:
+            result.add_issue(
+                rule=ValidationRule.REQUIRED_FIELD,
+                severity=ValidationSeverity.ERROR,
+                field=field_name,
+                message=f"Missing required field '{field_name}'.",
+            )
+            continue
 
-            if value is None:
-                result.add_issue(
-                    rule=ValidationRule.REQUIRED_FIELD,
-                    severity=ValidationSeverity.ERROR,
-                    field=field,
-                    message=f"Required field '{field}' is None.",
-                )
+        value = row[field_name]
 
-        return result
+        if value is None:
+            result.add_issue(
+                rule=ValidationRule.REQUIRED_FIELD,
+                severity=ValidationSeverity.ERROR,
+                field=field_name,
+                message=f"Required field '{field_name}' is None.",
+            )
+
+    return result
 
 
-    def validate_null_values(
-        row: Row,
-        fields: Optional[List[str]] = None,
-    ) -> ValidationResult:
-        result = ValidationResult()
+def validate_null_values(
+    row: Row,
+    fields: Optional[List[str]] = None,
+) -> ValidationResult:
+    result = ValidationResult()
 
-        target_fields = fields or list(row.keys())
+    target_fields = fields or list(row.keys())
 
-        for field in target_fields:
-            if field not in row:
-                continue
+    for field_name in target_fields:
+        if field_name not in row:
+            continue
 
-            value = row[field]
+        value = row[field_name]
 
-            if value is None:
+        if value is None:
+            result.add_issue(
+                rule=ValidationRule.NULL_VALUE,
+                severity=ValidationSeverity.ERROR,
+                field=field_name,
+                message=f"Field '{field_name}' contains NULL.",
+            )
+            continue
+
+        if isinstance(value, str):
+            if value.strip() in NULL_VALUES:
                 result.add_issue(
                     rule=ValidationRule.NULL_VALUE,
                     severity=ValidationSeverity.ERROR,
-                    field=field,
-                    message=f"Field '{field}' contains NULL.",
+                    field=field_name,
+                    message=f"Field '{field_name}' contains IMDb null marker.",
                 )
-                continue
 
-            if isinstance(value, str):
-                if value.strip() in NULL_VALUES:
-                    result.add_issue(
-                        rule=ValidationRule.NULL_VALUE,
-                        severity=ValidationSeverity.ERROR,
-                        field=field,
-                        message=f"Field '{field}' contains IMDb null marker.",
-                    )
-
-        return result
+    return result
 
 
-    def validate_empty_values(
-        row: Row,
-        fields: Optional[List[str]] = None,
-    ) -> ValidationResult:
-        result = ValidationResult()
+def validate_empty_values(
+    row: Row,
+    fields: Optional[List[str]] = None,
+) -> ValidationResult:
+    result = ValidationResult()
 
-        target_fields = fields or list(row.keys())
+    target_fields = fields or list(row.keys())
 
-        for field in target_fields:
-            if field not in row:
-                continue
+    for field_name in target_fields:
+        if field_name not in row:
+            continue
 
-            value = row[field]
-
-            if isinstance(value, str):
-                if value.strip() == "":
-                    result.add_issue(
-                        rule=ValidationRule.EMPTY_VALUE,
-                        severity=ValidationSeverity.WARNING,
-                        field=field,
-                        message=f"Field '{field}' is empty.",
-                    )
-
-        return result
-
-
-    def validate_type(
-        value: Any,
-        expected_type: type,
-        field_name: str,
-    ) -> ValidationResult:
-        result = ValidationResult()
-
-        if value is None:
-            return result
+        value = row[field_name]
 
         if isinstance(value, str):
-            stripped = value.strip()
-
-            if stripped in NULL_VALUES or stripped == "":
-                return result
-
-            try:
-                if expected_type is int:
-                    int(stripped)
-
-                elif expected_type is float:
-                    float(stripped)
-
-                elif expected_type is bool:
-                    if stripped.lower() not in {"0", "1", "true", "false"}:
-                        raise ValueError
-
-                elif expected_type is str:
-                    pass
-
-                else:
-                    expected_type(stripped)
-
-            except (TypeError, ValueError):
+            if value.strip() == "":
                 result.add_issue(
-                    rule=ValidationRule.INVALID_TYPE,
-                    severity=ValidationSeverity.ERROR,
+                    rule=ValidationRule.EMPTY_VALUE,
+                    severity=ValidationSeverity.WARNING,
                     field=field_name,
-                    message=(
-                        f"Field '{field_name}' cannot be converted "
-                        f"to {expected_type.__name__}."
-                    ),
+                    message=f"Field '{field_name}' is empty.",
                 )
 
-            return result
+    return result
 
-        if not isinstance(value, expected_type):
-            result.add_issue(
-                rule=ValidationRule.INVALID_TYPE,
-                severity=ValidationSeverity.ERROR,
-                field=field_name,
-                message=(
-                    f"Field '{field_name}' has invalid type "
-                    f"'{type(value).__name__}'. "
-                    f"Expected '{expected_type.__name__}'."
-                ),
-            )
 
+def validate_type(
+    value: Any,
+    expected_type: type,
+    field_name: str,
+) -> ValidationResult:
+    result = ValidationResult()
+
+    if value is None:
         return result
 
+    if isinstance(value, str):
+        stripped = value.strip()
 
-    def validate_range(
-        value: Any,
-        field_name: str,
-        *,
-        minimum: Optional[float] = None,
-        maximum: Optional[float] = None,
-    ) -> ValidationResult:
-        result = ValidationResult()
-
-        if value is None:
+        if stripped in NULL_VALUES or stripped == "":
             return result
 
         try:
-            numeric_value = float(value)
+            if expected_type is int:
+                int(stripped)
+
+            elif expected_type is float:
+                float(stripped)
+
+            elif expected_type is bool:
+                if stripped.lower() not in {"0", "1", "true", "false"}:
+                    raise ValueError
+
+            elif expected_type is str:
+                pass
+
+            else:
+                expected_type(stripped)
+
         except (TypeError, ValueError):
             result.add_issue(
                 rule=ValidationRule.INVALID_TYPE,
                 severity=ValidationSeverity.ERROR,
                 field=field_name,
-                message=f"Field '{field_name}' is not numeric.",
-            )
-            return result
-
-        if minimum is not None and numeric_value < minimum:
-            result.add_issue(
-                rule=ValidationRule.INVALID_RANGE,
-                severity=ValidationSeverity.ERROR,
-                field=field_name,
                 message=(
-                    f"Field '{field_name}' is below "
-                    f"minimum value {minimum}."
-                ),
-            )
-
-        if maximum is not None and numeric_value > maximum:
-            result.add_issue(
-                rule=ValidationRule.INVALID_RANGE,
-                severity=ValidationSeverity.ERROR,
-                field=field_name,
-                message=(
-                    f"Field '{field_name}' exceeds "
-                    f"maximum value {maximum}."
+                    f"Field '{field_name}' cannot be converted "
+                    f"to {expected_type.__name__}."
                 ),
             )
 
         return result
-    
-    @dataclass(slots=True)
-    class DatasetValidator:
-        dataset_name: str
-        required_columns: List[str]
 
-        statistics: ValidationStatistics = field(init=False)
-        seen_keys: Set[str] = field(default_factory=set)
+    if not isinstance(value, expected_type):
+        result.add_issue(
+            rule=ValidationRule.INVALID_TYPE,
+            severity=ValidationSeverity.ERROR,
+            field=field_name,
+            message=(
+                f"Field '{field_name}' has invalid type "
+                f"'{type(value).__name__}'. "
+                f"Expected '{expected_type.__name__}'."
+            ),
+        )
 
-        def __post_init__(self) -> None:
-            if self.dataset_name not in IMDB_DATASETS:
-                raise ValidationError(
-                    f"Unknown dataset '{self.dataset_name}'."
-                )
+    return result
 
-            self.statistics = ValidationStatistics(
-                dataset_name=self.dataset_name
+
+def validate_range(
+    value: Any,
+    field_name: str,
+    *,
+    minimum: Optional[float] = None,
+    maximum: Optional[float] = None,
+) -> ValidationResult:
+    result = ValidationResult()
+
+    if value is None:
+        return result
+
+    try:
+        numeric_value = float(value)
+    except (TypeError, ValueError):
+        result.add_issue(
+            rule=ValidationRule.INVALID_TYPE,
+            severity=ValidationSeverity.ERROR,
+            field=field_name,
+            message=f"Field '{field_name}' is not numeric.",
+        )
+        return result
+
+    if minimum is not None and numeric_value < minimum:
+        result.add_issue(
+            rule=ValidationRule.INVALID_RANGE,
+            severity=ValidationSeverity.ERROR,
+            field=field_name,
+            message=(
+                f"Field '{field_name}' is below "
+                f"minimum value {minimum}."
+            ),
+        )
+
+    if maximum is not None and numeric_value > maximum:
+        result.add_issue(
+            rule=ValidationRule.INVALID_RANGE,
+            severity=ValidationSeverity.ERROR,
+            field=field_name,
+            message=(
+                f"Field '{field_name}' exceeds "
+                f"maximum value {maximum}."
+            ),
+        )
+
+    return result
+
+
+@dataclass(slots=True)
+class DatasetValidator:
+    dataset_name: str
+    required_columns: List[str]
+
+    statistics: ValidationStatistics = field(init=False)
+    seen_keys: Set[str] = field(default_factory=set)
+
+    def __post_init__(self) -> None:
+        if self.dataset_name not in IMDB_DATASETS and self.dataset_name != "manual":
+            raise ValidationError(
+                f"Unknown dataset '{self.dataset_name}'."
             )
 
-        def validate_header(
-            self,
-            columns: List[str],
-        ) -> ValidationResult:
-            result = ValidationResult()
+        self.statistics = ValidationStatistics(
+            dataset_name=self.dataset_name
+        )
 
-            actual = set(columns)
-            expected = set(self.required_columns)
+    def validate_header(
+        self,
+        columns: List[str],
+    ) -> ValidationResult:
+        result = ValidationResult()
 
-            missing = expected - actual
-            unexpected = actual - expected
+        actual = set(columns)
+        expected = set(self.required_columns)
 
-            for column in sorted(missing):
-                result.add_issue(
-                    rule=ValidationRule.MISSING_COLUMN,
-                    severity=ValidationSeverity.ERROR,
-                    field=column,
-                    message=f"Missing column '{column}'.",
-                )
+        missing = expected - actual
+        unexpected = actual - expected
 
-            for column in sorted(unexpected):
-                result.add_issue(
-                    rule=ValidationRule.UNEXPECTED_COLUMN,
-                    severity=ValidationSeverity.WARNING,
-                    field=column,
-                    message=f"Unexpected column '{column}'.",
-                )
+        for column in sorted(missing):
+            result.add_issue(
+                rule=ValidationRule.MISSING_COLUMN,
+                severity=ValidationSeverity.ERROR,
+                field=column,
+                message=f"Missing column '{column}'.",
+            )
+
+        for column in sorted(unexpected):
+            result.add_issue(
+                rule=ValidationRule.UNEXPECTED_COLUMN,
+                severity=ValidationSeverity.WARNING,
+                field=column,
+                message=f"Unexpected column '{column}'.",
+            )
+
+        return result
+
+    def validate_duplicate(
+        self,
+        row: Row,
+        key_field: str,
+    ) -> ValidationResult:
+        result = ValidationResult()
+
+        key = row.get(key_field)
+
+        if key in (None, "", "\\N"):
+            return result
+
+        key = str(key)
+
+        if key in self.seen_keys:
+            self.statistics.duplicate_rows += 1
+
+            result.add_issue(
+                rule=ValidationRule.DUPLICATE,
+                severity=ValidationSeverity.ERROR,
+                field=key_field,
+                message=f"Duplicate value '{key}'.",
+            )
 
             return result
 
-        def validate_duplicate(
-            self,
-            row: Row,
-            key_field: str,
-        ) -> ValidationResult:
-            result = ValidationResult()
+        self.seen_keys.add(key)
 
-            key = row.get(key_field)
+        return result
 
-            if key in (None, "", "\\N"):
-                return result
+    def validate_row(
+        self,
+        row: Row,
+    ) -> ValidationResult:
+        result = ValidationResult()
 
-            if key in self.seen_keys:
-                self.statistics.duplicate_rows += 1
+        required_result = validate_required_fields(
+            row,
+            self.required_columns,
+        )
 
-                result.add_issue(
-                    rule=ValidationRule.DUPLICATE,
-                    severity=ValidationSeverity.ERROR,
-                    field=key_field,
-                    message=f"Duplicate value '{key}'.",
-                )
+        null_result = validate_null_values(
+            row,
+            self.required_columns,
+        )
 
-                return result
+        empty_result = validate_empty_values(
+            row,
+            self.required_columns,
+        )
 
-            self.seen_keys.add(str(key))
+        result.issues.extend(required_result.issues)
+        result.issues.extend(null_result.issues)
+        result.issues.extend(empty_result.issues)
 
-            return result
+        if any(
+            issue.severity == ValidationSeverity.ERROR
+            for issue in result.issues
+        ):
+            result.status = ValidationStatus.INVALID
 
-        def validate_row(
-            self,
-            row: Row,
-        ) -> ValidationResult:
-            result = ValidationResult()
+        return result
 
-            required_result = validate_required_fields(
-                row,
-                self.required_columns,
-            )
+    def update_statistics(
+        self,
+        result: ValidationResult,
+    ) -> None:
+        self.statistics.rows_processed += 1
 
-            null_result = validate_null_values(
-                row,
-                self.required_columns,
-            )
+        if result.is_valid:
+            self.statistics.valid_rows += 1
+        else:
+            self.statistics.invalid_rows += 1
 
-            empty_result = validate_empty_values(
-                row,
-                self.required_columns,
-            )
+        if result.has_warnings:
+            self.statistics.warning_rows += 1
 
-            result.issues.extend(required_result.issues)
-            result.issues.extend(null_result.issues)
-            result.issues.extend(empty_result.issues)
+        for issue in result.issues:
+            match issue.rule:
+                case ValidationRule.REQUIRED_FIELD:
+                    self.statistics.missing_field_errors += 1
 
-            if any(
-                issue.severity == ValidationSeverity.ERROR
-                for issue in result.issues
-            ):
-                result.status = ValidationStatus.INVALID
+                case ValidationRule.NULL_VALUE:
+                    self.statistics.null_value_errors += 1
 
-            return result
+                case ValidationRule.INVALID_TYPE:
+                    self.statistics.type_errors += 1
 
-        def update_statistics(
-            self,
-            result: ValidationResult,
-        ) -> None:
-            self.statistics.rows_processed += 1
+                case ValidationRule.INVALID_RANGE:
+                    self.statistics.range_errors += 1
 
-            if result.is_valid:
-                self.statistics.valid_rows += 1
-            else:
-                self.statistics.invalid_rows += 1
+    def finalize(self) -> ValidationStatistics:
+        self.statistics.finish()
+        return self.statistics
 
-            for issue in result.issues:
-                match issue.rule:
-                    case ValidationRule.REQUIRED_FIELD:
-                        self.statistics.missing_field_errors += 1
+    def summary(self) -> Dict[str, Any]:
+        return {
+            "dataset": self.statistics.dataset_name,
+            "rows_processed": self.statistics.rows_processed,
+            "valid_rows": self.statistics.valid_rows,
+            "invalid_rows": self.statistics.invalid_rows,
+            "duplicate_rows": self.statistics.duplicate_rows,
+            "total_errors": self.statistics.total_errors,
+            "validation_rate": self.statistics.validation_rate,
+            "started_at": self.statistics.started_at,
+            "finished_at": self.statistics.finished_at,
+        }
 
-                    case ValidationRule.NULL_VALUE:
-                        self.statistics.null_value_errors += 1
 
-                    case ValidationRule.INVALID_TYPE:
-                        self.statistics.type_errors += 1
-
-                    case ValidationRule.INVALID_RANGE:
-                        self.statistics.range_errors += 1
-
-        def finalize(self) -> ValidationStatistics:
-            self.statistics.finish()
-            return self.statistics
-
-        def summary(self) -> Dict[str, Any]:
-            return {
-                "dataset": self.statistics.dataset_name,
-                "rows_processed": self.statistics.rows_processed,
-                "valid_rows": self.statistics.valid_rows,
-                "invalid_rows": self.statistics.invalid_rows,
-                "duplicate_rows": self.statistics.duplicate_rows,
-                "total_errors": self.statistics.total_errors,
-                "validation_rate": self.statistics.validation_rate,
-                "started_at": self.statistics.started_at,
-                "finished_at": self.statistics.finished_at,
-            }
-        
 class ValidationEngine:
+    """Streams chunks through a ``DatasetValidator``, filtering out
+    invalid rows and optionally persisting them for inspection.
+    """
+
     def __init__(
         self,
         validator: DatasetValidator,
@@ -559,9 +578,9 @@ class ValidationEngine:
             and processed % self.progress_interval == 0
         ):
             logger.info(
-                "%s: validated %,d rows (%.2f%% valid)",
+                "%s: validated %s rows (%.2f%% valid)",
                 self.validator.dataset_name,
-                processed,
+                f"{processed:,}",
                 self.validator.statistics.validation_rate,
             )
 
@@ -624,126 +643,131 @@ class ValidationEngine:
         logger.info(
             (
                 "%s validation completed | "
-                "Processed: %,d | "
-                "Valid: %,d | "
-                "Invalid: %,d | "
-                "Duplicates: %,d | "
+                "Processed: %s | "
+                "Valid: %s | "
+                "Invalid: %s | "
+                "Duplicates: %s | "
                 "Success Rate: %.2f%%"
             ),
             stats.dataset_name,
-            stats.rows_processed,
-            stats.valid_rows,
-            stats.invalid_rows,
-            stats.duplicate_rows,
+            f"{stats.rows_processed:,}",
+            f"{stats.valid_rows:,}",
+            f"{stats.invalid_rows:,}",
+            f"{stats.duplicate_rows:,}",
             stats.validation_rate,
         )
 
         return stats
-    
-    class IMDbValidator:
-        def __init__(
-            self,
-            dataset_name: str,
-            required_columns: List[str],
-            duplicate_key: Optional[str] = None,
-            invalid_rows_path: Optional[Path] = None,
-            progress_interval: int = 100_000,
-        ) -> None:
-            self.validator = DatasetValidator(
-                dataset_name=dataset_name,
-                required_columns=required_columns,
-            )
-
-            self.engine = ValidationEngine(
-                validator=self.validator,
-                invalid_rows_path=invalid_rows_path,
-                progress_interval=progress_interval,
-            )
-
-            self.duplicate_key = duplicate_key
-
-        def validate(
-            self,
-            chunks: ChunkIterator,
-        ) -> Generator[RowBatch, None, None]:
-            with self.engine:
-                yield from self.engine.validate_stream(
-                    chunks=chunks,
-                    duplicate_key=self.duplicate_key,
-                )
-
-        def statistics(self) -> ValidationStatistics:
-            return self.engine.finalize()
-
-        def summary(self) -> Dict[str, Any]:
-            return self.validator.summary()
 
 
-    def validate_dataset(
+class IMDbValidator:
+    """Convenience wrapper combining a ``DatasetValidator`` with a
+    ``ValidationEngine`` for a single named IMDb dataset.
+    """
+
+    def __init__(
+        self,
         dataset_name: str,
-        chunks: ChunkIterator,
         required_columns: List[str],
         duplicate_key: Optional[str] = None,
         invalid_rows_path: Optional[Path] = None,
         progress_interval: int = 100_000,
-    ) -> tuple[Generator[RowBatch, None, None], IMDbValidator]:
-        validator = IMDbValidator(
+    ) -> None:
+        self.validator = DatasetValidator(
             dataset_name=dataset_name,
             required_columns=required_columns,
-            duplicate_key=duplicate_key,
+        )
+
+        self.engine = ValidationEngine(
+            validator=self.validator,
             invalid_rows_path=invalid_rows_path,
             progress_interval=progress_interval,
         )
 
-        return (
-            validator.validate(chunks),
-            validator,
-        )
+        self.duplicate_key = duplicate_key
+
+    def validate(
+        self,
+        chunks: ChunkIterator,
+    ) -> Generator[RowBatch, None, None]:
+        with self.engine:
+            yield from self.engine.validate_stream(
+                chunks=chunks,
+                duplicate_key=self.duplicate_key,
+            )
+
+    def statistics(self) -> ValidationStatistics:
+        return self.engine.finalize()
+
+    def summary(self) -> Dict[str, Any]:
+        return self.validator.summary()
 
 
-    def validate_single_row(
-        row: Row,
-        required_fields: List[str],
-    ) -> ValidationResult:
-        validator = DatasetValidator(
-            dataset_name="manual",
-            required_columns=required_fields,
-        )
+def validate_dataset(
+    dataset_name: str,
+    chunks: ChunkIterator,
+    required_columns: List[str],
+    duplicate_key: Optional[str] = None,
+    invalid_rows_path: Optional[Path] = None,
+    progress_interval: int = 100_000,
+) -> tuple[Generator[RowBatch, None, None], IMDbValidator]:
+    validator = IMDbValidator(
+        dataset_name=dataset_name,
+        required_columns=required_columns,
+        duplicate_key=duplicate_key,
+        invalid_rows_path=invalid_rows_path,
+        progress_interval=progress_interval,
+    )
 
-        return validator.validate_row(row)
-
-
-    def create_validator(
-        dataset_name: str,
-        required_columns: List[str],
-        duplicate_key: Optional[str] = None,
-        invalid_rows_path: Optional[Path] = None,
-    ) -> IMDbValidator:
-        return IMDbValidator(
-            dataset_name=dataset_name,
-            required_columns=required_columns,
-            duplicate_key=duplicate_key,
-            invalid_rows_path=invalid_rows_path,
-        )
+    return (
+        validator.validate(chunks),
+        validator,
+    )
 
 
-    __all__ = [
-        "ValidationError",
-        "ValidationSeverity",
-        "ValidationStatus",
-        "ValidationRule",
-        "ValidationIssue",
-        "ValidationResult",
-        "ValidationStatistics",
-        "DatasetValidator",
-        "ValidationEngine",
-        "IMDbValidator",
-        "validate_required_fields",
-        "validate_null_values",
-        "validate_empty_values",
-        "validate_type",
-        "validate_range",
-        "validate_dataset",
-        "validate_single_row",
-        "create_validator",
-    ]
+def validate_single_row(
+    row: Row,
+    required_fields: List[str],
+) -> ValidationResult:
+    validator = DatasetValidator(
+        dataset_name="manual",
+        required_columns=required_fields,
+    )
+
+    return validator.validate_row(row)
+
+
+def create_validator(
+    dataset_name: str,
+    required_columns: List[str],
+    duplicate_key: Optional[str] = None,
+    invalid_rows_path: Optional[Path] = None,
+) -> IMDbValidator:
+    return IMDbValidator(
+        dataset_name=dataset_name,
+        required_columns=required_columns,
+        duplicate_key=duplicate_key,
+        invalid_rows_path=invalid_rows_path,
+    )
+
+
+__all__ = [
+    "ValidationError",
+    "ValidationSeverity",
+    "ValidationStatus",
+    "ValidationRule",
+    "ValidationIssue",
+    "ValidationResult",
+    "ValidationStatistics",
+    "DatasetValidator",
+    "ValidationEngine",
+    "IMDbValidator",
+    "validate_required_fields",
+    "validate_null_values",
+    "validate_empty_values",
+    "validate_type",
+    "validate_range",
+    "validate_dataset",
+    "validate_single_row",
+    "create_validator",
+]

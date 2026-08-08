@@ -1,12 +1,20 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from datetime import date
 from enum import Enum
 from typing import Any, Dict, List, Optional, Set, TypeAlias
 
-from constants import NULL_VALUES
-from logger import get_logger
+from etl.constants import (
+    DEFAULT_PERSON_ROLE,
+    DEFAULT_TITLE_TYPE,
+    NULL_VALUES,
+    PERSON_ROLE_MAP,
+    SUPPORTED_TITLE_TYPES,
+    TITLE_TYPE_MAP,
+)
+from etl.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -270,6 +278,44 @@ def normalize_professions(value: Any) -> List[str]:
 def normalize_known_titles(value: Any) -> List[str]:
     return unique_list(parse_csv_list(value))
 
+
+def map_title_type(imdb_title_type: Optional[str]) -> str:
+    if imdb_title_type is None:
+        return DEFAULT_TITLE_TYPE
+
+    return TITLE_TYPE_MAP.get(imdb_title_type, DEFAULT_TITLE_TYPE)
+
+
+def map_person_role(imdb_category: Optional[str]) -> str:
+    if imdb_category is None:
+        return DEFAULT_PERSON_ROLE
+
+    return PERSON_ROLE_MAP.get(imdb_category, DEFAULT_PERSON_ROLE)
+
+
+def parse_character_names(value: Any) -> Optional[str]:
+    """IMDb serializes title.principals.characters as a JSON array string,
+    e.g. '["Andy Dufresne"]'. Returns a clean comma-joined string, or
+    None if there's nothing usable.
+    """
+
+    text = clean_string(value)
+
+    if text is None:
+        return None
+
+    try:
+        names = json.loads(text)
+    except (json.JSONDecodeError, TypeError):
+        return text
+
+    if not isinstance(names, list):
+        return text
+
+    cleaned = [str(name).strip() for name in names if str(name).strip()]
+
+    return ", ".join(cleaned) if cleaned else None
+
 class IMDbRowTransformer:
     @staticmethod
     def transform_title_basics(row: Row) -> TransformResult:
@@ -282,15 +328,43 @@ class IMDbRowTransformer:
                 errors=["Missing IMDb title ID"],
             )
 
+        title_type = clean_string(row.get("titleType"))
+
+        if title_type is not None and title_type not in SUPPORTED_TITLE_TYPES:
+            return TransformResult(
+                dataset=DatasetType.TITLE_BASICS,
+                skipped=True,
+                errors=[f"Unsupported title type '{title_type}'"],
+            )
+
+        primary_title = clean_string(row.get("primaryTitle"))
+        release_year = to_year(row.get("startYear"))
+
+        # movies.title and movies.release_year are NOT NULL in
+        # database/schema.sql; rows missing either cannot be loaded.
+        if primary_title is None:
+            return TransformResult(
+                dataset=DatasetType.TITLE_BASICS,
+                skipped=True,
+                errors=["Missing primary title"],
+            )
+
+        if release_year is None:
+            return TransformResult(
+                dataset=DatasetType.TITLE_BASICS,
+                skipped=True,
+                errors=["Missing or invalid release year"],
+            )
+
         genres = normalize_genres(row.get("genres"))
 
         movie = {
             "imdb_id": imdb_id,
-            "title_type": clean_string(row.get("titleType")),
-            "primary_title": clean_string(row.get("primaryTitle")),
+            "title_type": title_type,
+            "primary_title": primary_title,
             "original_title": clean_string(row.get("originalTitle")),
             "is_adult": to_bool(row.get("isAdult")),
-            "release_year": to_year(row.get("startYear")),
+            "release_year": release_year,
             "end_year": to_year(row.get("endYear")),
             "runtime_minutes": to_int(row.get("runtimeMinutes")),
         }
@@ -347,28 +421,32 @@ class IMDbRowTransformer:
             row.get("knownForTitles")
         )
 
+        full_name = clean_string(row.get("primaryName"))
+
+        # people.full_name is NOT NULL in database/schema.sql.
+        if full_name is None:
+            return TransformResult(
+                dataset=DatasetType.NAME_BASICS,
+                skipped=True,
+                errors=["Missing full name"],
+            )
+
         person = {
             "imdb_person_id": imdb_person_id,
-            "full_name": clean_string(row.get("primaryName")),
+            "full_name": full_name,
             "birth_year": to_year(row.get("birthYear")),
             "death_year": to_year(row.get("deathYear")),
             "primary_profession": (
-                professions[0] if professions else None
+                ",".join(professions) if professions else None
+            ),
+            "known_for_titles": (
+                ",".join(known_titles) if known_titles else None
             ),
         }
 
         return TransformResult(
             dataset=DatasetType.NAME_BASICS,
             record=person,
-            bridge_records={
-                "known_for_titles": [
-                    {
-                        "imdb_person_id": imdb_person_id,
-                        "imdb_id": movie_id,
-                    }
-                    for movie_id in known_titles
-                ]
-            },
         )
 
     @staticmethod
@@ -389,7 +467,7 @@ class IMDbRowTransformer:
             "ordering": to_int(row.get("ordering")),
             "category": clean_string(row.get("category")),
             "job": clean_string(row.get("job")),
-            "characters": clean_string(row.get("characters")),
+            "characters": parse_character_names(row.get("characters")),
         }
 
         return TransformResult(
@@ -460,7 +538,8 @@ class IMDbRowTransformer:
         return [
             {
                 "imdb_id": imdb_id,
-                "language_code": language_code.lower(),
+                "iso_639_1": language_code.lower(),
+                "is_original": True,
             }
         ]
     
@@ -475,8 +554,8 @@ class IMDbRowTransformer:
                 {
                     "imdb_id": principal["imdb_id"],
                     "imdb_person_id": principal["imdb_person_id"],
-                    "role": principal.get("category"),
-                    "job": principal.get("job"),
+                    "role": map_person_role(principal.get("category")),
+                    "job_title": principal.get("job"),
                     "character_name": principal.get("characters"),
                     "billing_order": principal.get("ordering"),
                 }
@@ -499,8 +578,9 @@ class IMDbRowTransformer:
             "imdb_id": movie.get("imdb_id"),
             "title": movie.get("primary_title"),
             "original_title": movie.get("original_title"),
-            "title_type": movie.get("title_type"),
+            "title_type": map_title_type(movie.get("title_type")),
             "release_year": movie.get("release_year"),
+            "end_year": movie.get("end_year"),
             "runtime_minutes": movie.get("runtime_minutes"),
             "original_language": None,
             "is_adult": movie.get("is_adult", False),
@@ -513,7 +593,7 @@ class IMDbRowTransformer:
         return {
             "imdb_id": rating.get("imdb_id"),
             "imdb_rating": rating.get("imdb_rating"),
-            "vote_count": rating.get("vote_count"),
+            "imdb_vote_count": rating.get("vote_count"),
         }
     
     @staticmethod
@@ -526,6 +606,7 @@ class IMDbRowTransformer:
             "birth_year": person.get("birth_year"),
             "death_year": person.get("death_year"),
             "primary_profession": person.get("primary_profession"),
+            "known_for_titles": person.get("known_for_titles"),
         }
     
     @staticmethod
@@ -535,39 +616,39 @@ class IMDbRowTransformer:
         output: Dict[str, RecordBatch] = {}
 
         if result.dataset == DatasetType.TITLE_BASICS:
-            movie = build_movie_record(result.record or {})
+            movie = IMDbRowTransformer.build_movie_record(result.record or {})
 
             output["movies"] = [movie]
             output["genres"] = result.bridge_records.get("genres", [])
-            output["movie_genres"] = normalize_movie_genres(
+            output["movie_genres"] = IMDbRowTransformer.normalize_movie_genres(
                 movie["imdb_id"],
                 [
                     genre["genre_name"]
                     for genre in result.bridge_records.get("genres", [])
                 ],
             )
-            output["movie_languages"] = normalize_movie_languages(
+            output["movie_languages"] = IMDbRowTransformer.normalize_movie_languages(
                 movie["imdb_id"],
                 movie.get("original_language"),
             )
 
         elif result.dataset == DatasetType.TITLE_RATINGS:
             output["movie_ratings"] = [
-                build_movie_rating_record(result.record or {})
+                IMDbRowTransformer.build_movie_rating_record(result.record or {})
             ]
 
         elif result.dataset == DatasetType.NAME_BASICS:
             output["people"] = [
-                build_person_record(result.record or {})
+                IMDbRowTransformer.build_person_record(result.record or {})
             ]
 
         elif result.dataset == DatasetType.TITLE_PRINCIPALS:
-            output["movie_people"] = normalize_movie_people(
+            output["movie_people"] = IMDbRowTransformer.normalize_movie_people(
                 [result.record or {}]
             )
 
         elif result.dataset == DatasetType.TITLE_CREW:
-            output["movie_people"] = normalize_movie_crew(
+            output["movie_people"] = IMDbRowTransformer.normalize_movie_crew(
                 result.bridge_records.get("directors", []),
                 result.bridge_records.get("writers", []),
             )
@@ -660,7 +741,7 @@ class IMDbTransformer:
         if result.skipped or result.errors:
             return {}
 
-        return build_postgresql_records(result)
+        return IMDbRowTransformer.build_postgresql_records(result)
 
     def get_statistics(
         self,

@@ -9,13 +9,13 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Iterator, List, Optional, TextIO, TypeAlias
 from functools import lru_cache
 
-from config import settings
-from constants import (
+from etl.config import settings
+from etl.constants import (
     CHUNK_SIZE,
     ENCODING_CANDIDATES,
     IMDB_DATASETS,
 )
-from logger import get_logger
+from etl.logger import get_logger
 
 logger = get_logger(__name__)
 
@@ -78,7 +78,7 @@ def get_dataset_info(dataset_name: str) -> DatasetInfo:
         raise ExtractError(f"Unknown dataset: {dataset_name}")
 
     file_name = IMDB_DATASETS[dataset_name]
-    file_path = settings.IMDB_RAW_DIR / file_name
+    file_path = settings.imdb_data_path / file_name
 
     return DatasetInfo(
         name=dataset_name,
@@ -260,9 +260,9 @@ class StreamingTSVReader:
 
                 if processed % 100000 == 0:
                     logger.info(
-                        "%s: processed %,d rows",
+                        "%s: processed %s rows",
                         self.dataset.name,
-                        processed,
+                        f"{processed:,}",
                     )
 
                 yield row
