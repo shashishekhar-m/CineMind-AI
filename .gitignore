@@ -1,8 +1,25 @@
-etl/data/imdb/raw/
-etl/data/imdb/archive/
-etl/data/tmdb/cache/
-etl/data/tmdb/images/
-etl/data/tmdb/responses/
-*.tsv
-*.gz
+# Python
+__pycache__/
+*.py[cod]
+
+# Virtual environment
+.venv/
+venv/
+env/
+
+# Environment variables
 .env
+
+# ETL data
+etl/data/
+
+# Logs
+*.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
