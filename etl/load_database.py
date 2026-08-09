@@ -46,7 +46,7 @@ BatchCounts: TypeAlias = Tuple[int, int, int]
 # Minimal Core table definitions (columns actually written by this loader)
 # for the tables that need INSERT ... ON CONFLICT ... RETURNING against a
 # multi-row batch. Raw text() SQL with a list of parameter dicts is
-# executed by psycopg2 as cursor.executemany(), which does not return
+# executed by psycopg as cursor.executemany(), which does not return
 # rows for RETURNING; SQLAlchemy's Core insert() construct instead
 # compiles the whole batch into a single multi-row INSERT statement
 # (one cursor.execute()), which RETURNING works with correctly.
@@ -99,7 +99,7 @@ MOVIE_PEOPLE_TABLE = Table(
 
 def build_database_url() -> str:
     return (
-        "postgresql+psycopg2://"
+        "postgresql+psycopg://"
         f"{settings.postgres_user}:{settings.postgres_password}"
         f"@{settings.postgres_host}:{settings.postgres_port}"
         f"/{settings.postgres_database}"
@@ -125,7 +125,7 @@ def build_engine(*, echo: bool = False) -> Engine:
         cursor = dbapi_connection.cursor()
         cursor.execute(f"SET search_path TO {schema}, public")
         cursor.close()
-        # Without this commit, the SET runs inside psycopg2's default
+        # Without this commit, the SET runs inside psycopg's default
         # (non-autocommit) transaction and is silently undone the first
         # time SQLAlchemy issues a ROLLBACK on this connection (which it
         # does by default whenever a connection is returned to the pool),

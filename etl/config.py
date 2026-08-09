@@ -61,7 +61,7 @@ class Settings(BaseSettings):
     @property
     def sqlalchemy_database_uri(self) -> str:
         return (
-            f"postgresql+psycopg2://"
+            f"postgresql+psycopg://"
             f"{self.postgres_user}:"
             f"{self.postgres_password}@"
             f"{self.postgres_host}:"
