@@ -1,3 +1,5 @@
+SET search_path TO cinemind, public;
+
 CREATE INDEX idx_movie_genres_movie
 ON movie_genres(movie_id);
 
@@ -139,11 +141,11 @@ ON recommendation_models(is_active);
 
 CREATE INDEX idx_movie_embeddings_movie
 ON movie_embeddings(movie_id)
-WHERE deleted_at IS NULL;
+WHERE is_active = TRUE;
 
 CREATE INDEX idx_movie_embeddings_model
 ON movie_embeddings(model_id)
-WHERE deleted_at IS NULL;
+WHERE is_active = TRUE;
 
 CREATE INDEX idx_movie_embeddings_vector
 ON movie_embeddings
@@ -243,7 +245,7 @@ CREATE INDEX idx_movie_ratings_rating
 ON movie_ratings(imdb_rating DESC);
 
 CREATE INDEX idx_movie_ratings_votes
-ON movie_ratings(vote_count DESC);
+ON movie_ratings(imdb_vote_count DESC);
 
 CREATE INDEX idx_movies_year_language
 ON movies(release_year, original_language);
