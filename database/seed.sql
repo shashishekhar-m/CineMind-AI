@@ -1,9 +1,11 @@
 BEGIN;
 
+SET search_path TO cinemind, public;
+
 INSERT INTO metadata_sources
 (
     source_name,
-    source_version,
+    dataset_version,
     description
 )
 VALUES
@@ -59,7 +61,7 @@ VALUES
 
 INSERT INTO languages
 (
-    language_code,
+    iso_639_1,
     language_name
 )
 VALUES
@@ -120,35 +122,35 @@ INSERT INTO recommendation_models
 VALUES
 (
     'Popularity Ranking',
-    'POPULARITY',
+    'popularity',
     '1.0',
     'Ranks movies using popularity and vote count.',
     TRUE
 ),
 (
     'Genre Similarity',
-    'CONTENT_BASED',
+    'content_based',
     '1.0',
     'Genre overlap recommendation.',
     TRUE
 ),
 (
     'TF-IDF Content Model',
-    'TFIDF',
+    'tfidf',
     '1.0',
     'Content recommendation using TF-IDF.',
     TRUE
 ),
 (
     'Sentence Transformer',
-    'EMBEDDING',
+    'sentence_transformer',
     '1.0',
     'Semantic recommendation using sentence embeddings.',
     FALSE
 ),
 (
     'Hybrid Recommendation',
-    'HYBRID',
+    'hybrid',
     '1.0',
     'Popularity + Genre + Semantic ranking.',
     FALSE
