@@ -47,6 +47,10 @@ class TransformResult:
     errors: List[str] = field(default_factory=list)
 
     @property
+    def records(self) -> Dict[str, RecordBatch]:
+        return IMDbRowTransformer.build_postgresql_records(self)
+
+    @property
     def success(self) -> bool:
         return not self.skipped and not self.errors
 
@@ -654,6 +658,40 @@ class IMDbRowTransformer:
             )
 
         return output
+
+    @staticmethod
+    def transform_to_postgresql(
+        dataset: DatasetType,
+        row: Row,
+    ) -> Dict[str, RecordBatch]:
+        """
+        Transform one IMDb row and return PostgreSQL-ready records.
+
+        This method is kept on IMDbRowTransformer for compatibility
+        with direct row-level callers.
+        """
+
+        if dataset == DatasetType.TITLE_BASICS:
+            result = IMDbRowTransformer.transform_title_basics(row)
+
+        elif dataset == DatasetType.TITLE_RATINGS:
+            result = IMDbRowTransformer.transform_title_ratings(row)
+
+        elif dataset == DatasetType.NAME_BASICS:
+            result = IMDbRowTransformer.transform_name_basics(row)
+
+        elif dataset == DatasetType.TITLE_PRINCIPALS:
+            result = IMDbRowTransformer.transform_title_principals(row)
+
+        elif dataset == DatasetType.TITLE_CREW:
+            result = IMDbRowTransformer.transform_title_crew(row)
+
+        else:
+            raise TransformError(
+                f"Unsupported dataset: {dataset}"
+            )
+
+        return result
     
 class IMDbTransformer:
     def __init__(self) -> None:
@@ -759,7 +797,7 @@ class IMDbTransformer:
         }
 
 
-transformer = IMDbTransformer()
+transformer = IMDbRowTransformer()
 
 __all__ = [
     "DatasetType",

@@ -91,7 +91,7 @@ DEFAULT_TITLE_TYPE = "movie"
 # which exists in the enum precisely for this purpose.
 PERSON_ROLE_MAP = {
     "actor": "actor",
-    "actress": "actress",
+    "actress": "actor",
     "director": "director",
     "writer": "writer",
     "producer": "producer",

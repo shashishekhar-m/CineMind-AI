@@ -28,6 +28,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, TypeAlias
 
 from sqlalchemy import Boolean, Column, Integer, MetaData, Numeric, Table, Text, event, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.postgresql import ENUM
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session, sessionmaker
@@ -58,7 +59,26 @@ MOVIES_TABLE = Table(
     Column("imdb_id", Text),
     Column("title", Text),
     Column("original_title", Text),
-    Column("title_type", Text),
+    Column(
+        "title_type",
+        ENUM(
+            "movie",
+            "tv_series",
+            "tv_episode",
+            "tv_movie",
+            "short",
+            "tv_short",
+            "tv_special",
+            "tv_mini_series",
+            "video",
+            "video_game",
+            "podcast",
+            "podcast_episode",
+            name="title_type_enum",
+            schema="cinemind",
+            create_type=False,
+        ),
+    ),
     Column("release_year", Integer),
     Column("end_year", Integer),
     Column("runtime_minutes", Integer),
