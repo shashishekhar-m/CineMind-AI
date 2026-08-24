@@ -1,0 +1,10 @@
+{
+  "dataset": "title_basics",
+  "rows_processed": 12629478,
+  "status": "completed",
+  "started_at": "2026-08-15T13:17:10.933162+00:00",
+  "updated_at": "2026-08-15T13:25:00.895168+00:00",
+  "finished_at": "2026-08-15T13:25:00.884461+00:00",
+  "execution_time_seconds": 469.95,
+  "error_message": null
+}

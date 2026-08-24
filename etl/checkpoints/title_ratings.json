@@ -1,0 +1,10 @@
+{
+  "dataset": "title_ratings",
+  "rows_processed": 1693014,
+  "status": "completed",
+  "started_at": "2026-08-18T08:14:25.892155+00:00",
+  "updated_at": "2026-08-18T08:15:26.257995+00:00",
+  "finished_at": "2026-08-18T08:15:26.243629+00:00",
+  "execution_time_seconds": 60.35,
+  "error_message": null
+}

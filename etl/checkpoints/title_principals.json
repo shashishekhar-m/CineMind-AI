@@ -1,0 +1,10 @@
+{
+  "dataset": "title_principals",
+  "rows_processed": 4290000,
+  "status": "running",
+  "started_at": "2026-08-18T13:27:13.318730+00:00",
+  "updated_at": "2026-08-18T14:23:01.519122+00:00",
+  "finished_at": "2026-08-18T13:26:59.264042+00:00",
+  "execution_time_seconds": 19.94,
+  "error_message": null
+}
