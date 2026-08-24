@@ -13,13 +13,13 @@ PROCESSED_DATA_DIR = DATA_DIR / "processed"
 LOG_DIR = DATA_DIR / "logs"
 
 IMDB_DATASET_FILES = {
-    "title_basics": "title.basics.tsv.gz",
-    "title_ratings": "title.ratings.tsv.gz",
-    "title_principals": "title.principals.tsv.gz",
-    "title_crew": "title.crew.tsv.gz",
-    "title_episode": "title.episode.tsv.gz",
-    "title_akas": "title.akas.tsv.gz",
-    "name_basics": "name.basics.tsv.gz",
+    "title_basics": "title.basics.tsv",
+    "title_ratings": "title.ratings.tsv",
+    "title_principals": "title.principals.tsv",
+    "title_crew": "title.crew.tsv",
+    "title_episode": "title.episode.tsv",
+    "title_akas": "title.akas.tsv",
+    "name_basics": "name.basics.tsv",
 }
 
 # extract.py / validate.py depend on this exact name.

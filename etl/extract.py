@@ -77,14 +77,44 @@ def get_dataset_info(dataset_name: str) -> DatasetInfo:
     if dataset_name not in IMDB_DATASETS:
         raise ExtractError(f"Unknown dataset: {dataset_name}")
 
-    file_name = IMDB_DATASETS[dataset_name]
-    file_path = settings.imdb_data_path / file_name
+    configured_name = IMDB_DATASETS[dataset_name]
+
+    # Prefer the configured filename.
+    candidates = [
+        configured_name,
+    ]
+
+    # Also support the alternate compressed/uncompressed form.
+    if configured_name.endswith(".tsv.gz"):
+        candidates.append(configured_name[:-3])
+    elif configured_name.endswith(".tsv"):
+        candidates.append(f"{configured_name}.gz")
+
+    file_path: Optional[Path] = None
+
+    for candidate in candidates:
+        candidate_path = settings.imdb_data_path / candidate
+
+        if candidate_path.is_file():
+            file_path = candidate_path
+            break
+
+    if file_path is None:
+        expected = ", ".join(
+            str(settings.imdb_data_path / candidate)
+            for candidate in candidates
+        )
+
+        raise ExtractError(
+            f"IMDb dataset '{dataset_name}' not found. "
+            f"Expected one of: {expected}"
+        )
 
     return DatasetInfo(
         name=dataset_name,
-        file_name=file_name,
+        file_name=file_path.name,
         path=file_path,
-        compressed=is_gzip_file(file_name),
+        compressed=is_gzip_file(file_path),
     )
 
 @lru_cache(maxsize=64)
