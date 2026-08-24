@@ -144,7 +144,7 @@ CineMind AI uses a hybrid recommendation approach:
 * [x] Project Architecture
 * [x] Database Design
 * [x] Streaming ETL Foundation
-* [ ] PostgreSQL Loader
+* [x] PostgreSQL Loader
 * [ ] TMDb Enrichment
 * [ ] Embedding Generation
 * [ ] Recommendation Engine
