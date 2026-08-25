@@ -34,6 +34,11 @@ class Settings(BaseSettings):
 
     tmdb_api_key: str = Field(default="", alias="TMDB_API_KEY")
 
+    tmdb_api_base_url: str = Field(
+        default="https://api.themoviedb.org/3",
+        alias="TMDB_API_BASE_URL",
+    )
+
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     # Master prompt (docs/00_MASTER_PROMPT.md) mandates a default chunk
