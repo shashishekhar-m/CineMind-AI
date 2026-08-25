@@ -761,6 +761,231 @@ class DatabaseLoader:
         finally:
             session.close()
 
+    # ------------------------------------------------------------------
+    # TMDB enrichment: movies
+    #
+    # This is a pure UPDATE, not an upsert-via-INSERT: movies has other
+    # NOT NULL columns (title, release_year) that a partial INSERT
+    # would violate even before reaching the ON CONFLICT path. Postgres'
+    # standard batched-update pattern (UPDATE ... FROM (VALUES ...))
+    # is used instead — one statement per batch, no row-by-row updates.
+    # IMDb-sourced canonical columns (imdb_id, title, original_title,
+    # title_type, release_year, end_year, runtime_minutes, is_adult)
+    # are never touched here.
+    # ------------------------------------------------------------------
+
+    _MOVIE_ENRICHMENT_COLUMNS = (
+        ("tmdb_id", "BIGINT"),
+        ("overview", "TEXT"),
+        ("tagline", "TEXT"),
+        ("status", "content_status_enum"),
+        ("poster_url", "TEXT"),
+        ("backdrop_url", "TEXT"),
+        ("trailer_key", "TEXT"),
+        ("homepage_url", "TEXT"),
+        ("tmdb_url", "TEXT"),
+        ("budget", "BIGINT"),
+        ("revenue", "BIGINT"),
+        ("popularity", "NUMERIC"),
+        ("vote_average", "NUMERIC"),
+        ("vote_count", "INTEGER"),
+        ("belongs_to_collection", "BOOLEAN"),
+        ("has_video", "BOOLEAN"),
+        ("metadata_source_id", "BIGINT"),
+        ("last_synced_at", "TIMESTAMPTZ"),
+    )
+
+    def _update_movie_enrichment(self, session: Session, batch: RecordBatch) -> BatchCounts:
+        columns = self._MOVIE_ENRICHMENT_COLUMNS
+
+        values_rows = []
+        params: Dict[str, Any] = {}
+
+        for i, record in enumerate(batch):
+            params[f"imdb_id_{i}"] = record["imdb_id"]
+            row_placeholders = [f"CAST(:imdb_id_{i} AS TEXT)"]
+
+            for col, sql_type in columns:
+                key = f"{col}_{i}"
+                params[key] = record.get(col)
+                row_placeholders.append(f"CAST(:{key} AS {sql_type})")
+
+            values_rows.append(f"({', '.join(row_placeholders)})")
+
+        set_clause = ", ".join(f"{col} = v.{col}" for col, _ in columns)
+        value_columns = ", ".join(["imdb_id"] + [col for col, _ in columns])
+
+        stmt = text(
+            f"""
+            UPDATE movies AS m
+            SET {set_clause}, updated_at = NOW()
+            FROM (VALUES {', '.join(values_rows)}) AS v({value_columns})
+            WHERE m.imdb_id = v.imdb_id
+            RETURNING m.movie_id
+            """
+        )
+
+        result = session.execute(stmt, params)
+        updated = len(result.fetchall())
+        return 0, updated, len(batch) - updated
+
+    def enrich_movies(self, records: RecordBatch) -> None:
+        """Batched partial-UPDATE of TMDB-sourced enrichment fields on
+        `movies`, matched by imdb_id. Records missing from the table
+        (shouldn't normally happen — enrichment only targets movies
+        already loaded from IMDb) are counted as skipped, not failed.
+        """
+
+        stats = self._stats("movies_enrichment")
+        stats.rows_received += len(records)
+
+        for batch in self._chunked(records, self.batch_size):
+            self._run_batch("movies_enrichment", batch, self._update_movie_enrichment)
+
+        if records:
+            logger.info("movies_enrichment: %s", stats.summary())
+
+    def get_movies_needing_tmdb_sync(
+        self,
+        limit: int = 100,
+        stale_after_days: int = 30,
+    ) -> RecordBatch:
+        """Returns up to `limit` movies that either have never been
+        TMDB-synced or were last synced more than `stale_after_days`
+        ago. Ordered so never-synced movies are prioritized.
+        """
+
+        session = self.session_factory()
+
+        try:
+            rows = session.execute(
+                text(
+                    """
+                    SELECT movie_id, imdb_id, tmdb_id, title_type
+                    FROM movies
+                    WHERE deleted_at IS NULL
+                      AND (
+                        last_synced_at IS NULL
+                        OR last_synced_at < NOW() - (:stale_after_days || ' days')::INTERVAL
+                      )
+                    ORDER BY last_synced_at ASC NULLS FIRST
+                    LIMIT :limit
+                    """
+                ),
+                {"limit": limit, "stale_after_days": stale_after_days},
+            ).all()
+
+            return [
+                {
+                    "movie_id": r.movie_id,
+                    "imdb_id": r.imdb_id,
+                    "tmdb_id": r.tmdb_id,
+                    "title_type": r.title_type,
+                }
+                for r in rows
+            ]
+
+        finally:
+            session.close()
+
+    def get_metadata_source_id(self, source_name: str) -> Optional[int]:
+        session = self.session_factory()
+
+        try:
+            row = session.execute(
+                text("SELECT source_id FROM metadata_sources WHERE source_name = :name"),
+                {"name": source_name},
+            ).first()
+
+            return row.source_id if row else None
+
+        finally:
+            session.close()
+
+    # ------------------------------------------------------------------
+    # TMDB enrichment: collections
+    # ------------------------------------------------------------------
+
+    def upsert_collection(
+        self,
+        tmdb_collection_id: int,
+        collection_name: str,
+        overview: Optional[str] = None,
+        poster_url: Optional[str] = None,
+        backdrop_url: Optional[str] = None,
+        metadata_source_id: Optional[int] = None,
+    ) -> Optional[int]:
+        session = self.session_factory()
+
+        try:
+            row = session.execute(
+                text(
+                    """
+                    INSERT INTO collections (
+                        tmdb_collection_id, collection_name, overview,
+                        poster_url, backdrop_url, metadata_source_id, last_synced_at
+                    ) VALUES (
+                        :tmdb_collection_id, :collection_name, :overview,
+                        :poster_url, :backdrop_url, :metadata_source_id, NOW()
+                    )
+                    ON CONFLICT (collection_name) DO UPDATE SET
+                        tmdb_collection_id = EXCLUDED.tmdb_collection_id,
+                        overview = EXCLUDED.overview,
+                        poster_url = EXCLUDED.poster_url,
+                        backdrop_url = EXCLUDED.backdrop_url,
+                        metadata_source_id = EXCLUDED.metadata_source_id,
+                        last_synced_at = NOW()
+                    RETURNING collection_id
+                    """
+                ),
+                {
+                    "tmdb_collection_id": tmdb_collection_id,
+                    "collection_name": collection_name,
+                    "overview": overview,
+                    "poster_url": poster_url,
+                    "backdrop_url": backdrop_url,
+                    "metadata_source_id": metadata_source_id,
+                },
+            ).first()
+
+            session.commit()
+            return row.collection_id if row else None
+
+        except SQLAlchemyError:
+            session.rollback()
+            logger.exception("Failed to upsert collection '%s'.", collection_name)
+            return None
+
+        finally:
+            session.close()
+
+    def link_movie_collection(self, movie_id: int, collection_id: int) -> bool:
+        session = self.session_factory()
+
+        try:
+            session.execute(
+                text(
+                    """
+                    INSERT INTO movie_collections (movie_id, collection_id)
+                    VALUES (:movie_id, :collection_id)
+                    ON CONFLICT (movie_id, collection_id) DO NOTHING
+                    """
+                ),
+                {"movie_id": movie_id, "collection_id": collection_id},
+            )
+            session.commit()
+            return True
+
+        except SQLAlchemyError:
+            session.rollback()
+            logger.exception(
+                "Failed to link movie_id=%s to collection_id=%s.", movie_id, collection_id
+            )
+            return False
+
+        finally:
+            session.close()
+
     def close(self) -> None:
         self.engine.dispose()
         logger.info("DatabaseLoader closed. Final summary: %s", self.summary())
