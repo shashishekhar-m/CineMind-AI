@@ -14,3 +14,7 @@ class MovieResult(BaseModel):
 
 class MovieSearchResult(MovieResult):
     similarity: float | None = None
+    genre_score: float | None = None
+    popularity_score: float | None = None
+    hybrid_score: float | None = None
+    

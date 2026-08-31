@@ -6,7 +6,11 @@ from fastapi import APIRouter, Depends, Query
 
 from backend.schemas.movie import MovieResult
 from backend.schemas.search import (
+    RecommendationResponse,
     SemanticSearchResponse,
+)
+from recommendation.recommender import (
+    semantic_recommendations,
 )
 from backend.services.database import get_db
 from backend.services.movie_service import search_movies
@@ -68,5 +72,28 @@ def movie_semantic_search(
 
     return SemanticSearchResponse(
         query=q,
+        results=results,
+    )
+
+@router.get(
+    "/{imdb_id}/recommendations",
+    response_model=RecommendationResponse,
+)
+def movie_recommendations(
+    imdb_id: str,
+    limit: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+    ),
+) -> RecommendationResponse:
+
+    results = semantic_recommendations(
+        imdb_id=imdb_id,
+        limit=limit,
+    )
+
+    return RecommendationResponse(
+        imdb_id=imdb_id,
         results=results,
     )

@@ -21,3 +21,7 @@ class SemanticSearchRequest(BaseModel):
 class SemanticSearchResponse(BaseModel):
     query: str
     results: list[MovieSearchResult]
+
+class RecommendationResponse(BaseModel):
+    imdb_id: str
+    results: list[MovieSearchResult]
